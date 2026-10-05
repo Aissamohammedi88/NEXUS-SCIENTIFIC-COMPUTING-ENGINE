@@ -1,0 +1,1500 @@
+ #!/usr/bin/env python3# -*- coding: utf-8 -*-
+# ═══════════════════════════════════════════════════════════════════════════
+# NEXUS SCIENTIFIC COMPUTING ENGINE v1.0.0
+# Moteur de calcul scientifique : omega, algebre, calcul, stats, physique,
+# theorie des nombres, Fourier, EDO. API REST + UI locale.
+# Auteur : Aissa Mohammedi (DGK)
+# Licence : NEXUS-OPEN-2.0
+# Compatible a-Shell iOS - os.path uniquement - stdlib pure
+# ═══════════════════════════════════════════════════════════════════════════
+
+import os
+import re
+import sys
+import json
+import math
+import time
+import ssl
+import cmath
+import socket
+import hashlib
+import datetime
+import threading
+import traceback
+import urllib.parse
+import urllib.request
+import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+
+VERSION = "1.0.0"
+AUTEUR = "Aissa Mohammedi (DGK)"
+LICENCE = "NEXUS-OPEN-2.0"
+
+HOME = os.path.expanduser("~")
+BASE = os.path.join(HOME, "Documents", "nexus_science")
+LOGS_DIR = os.path.join(BASE, "logs")
+RESULTS = os.path.join(BASE, "results")
+
+for d in (BASE, LOGS_DIR, RESULTS):
+os.makedirs(d, exist_ok=True)
+
+LOG_FILE = os.path.join(LOGS_DIR, "science.log")
+
+HOST = "127.0.0.1"
+PORT = 8920
+
+CTX = ssl.create_default_context()
+CTX.check_hostname = False
+CTX.verify_mode = ssl.CERT_NONE
+
+LOG_LOCK = threading.RLock()
+
+
+def log(msg):
+ts = time.strftime("%Y-%m-%d %H:%M:%S")
+line = "[{}] {}".format(ts, msg)
+try:
+print(line, flush=True)
+except Exception:
+pass
+with LOG_LOCK:
+try:
+with open(LOG_FILE, "a", encoding="utf-8") as f:
+f.write(line + "\n")
+except OSError:
+pass
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONSTANTES
+# ═══════════════════════════════════════════════════════════════════════════
+
+PI = math.pi
+E = math.e
+PHI = (1 + math.sqrt(5)) / 2 # nombre d'or
+GAMMA_EULER = 0.5772156649015329
+OMEGA_CONST = 0.5671432904097838 # Omega : W(1), solution de x*e^x = 1
+CATALAN = 0.9159655941772190
+APERY = 1.2020569031595943 # zeta(3)
+KHINCHIN = 2.6854520010653064
+GLAISHER = 1.2824271291006226
+FEIGENBAUM_D = 4.669201609102990
+FEIGENBAUM_A = 2.502907875095892
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# OMEGA — fonctions speciales sans scipy
+# ═══════════════════════════════════════════════════════════════════════════
+
+def omega_constant_iter(max_iter=200, tol=1e-15):
+"""Omega par iteration x_{n+1} = e^{-x_n}."""
+x = 1.0
+for _ in range(max_iter):
+xn = math.exp(-x)
+if abs(xn - x) < tol:
+return xn
+x = xn
+return x
+
+
+def lambert_w(x, branch=0, max_iter=200, tol=1e-15):
+"""Lambert W par iteration de Halley. Marche pour x >= -1/e (branche 0)."""
+if x == 0:
+return 0.0
+if branch == -1:
+if x < -1 / math.e or x >= 0:
+raise ValueError("branche -1 : -1/e <= x < 0")
+w = -1.5
+else:
+w = 0.5 if x > 0 else -0.5
+for _ in range(max_iter):
+ew = math.exp(w)
+f = w * ew - x
+fp = ew * (w + 1)
+fpp = ew * (w + 2)
+denom = fp - f * fpp / (2 * fp)
+if denom == 0:
+break
+wn = w - f / denom
+if abs(wn - w) < tol:
+return wn
+w = wn
+return w
+
+
+def zeta_approx(s, terms=200000):
+"""Approximation de zeta(s) pour s reel > 1 (somme directe)."""
+if s == 1:
+raise ValueError("pole en s=1")
+if s <= 1:
+# continuation rudimentaire via formule de reflexion (approximation)
+return (2 ** s) * (PI ** (s - 1)) * math.sin(PI * s / 2) * math.gamma(1 - s) * zeta_approx(1 - s + 1, terms)
+return sum(1.0 / (k ** s) for k in range(1, terms + 1))
+
+
+def gamma_lanczos(z):
+"""Gamma via approximation de Lanczos (stdlib pure)."""
+g = 7
+C = [0.99999999999980993,
+676.5203681218851,
+-1259.1392167224028,
+771.32342877765313,
+-176.61502916214059,
+12.507343278686905,
+-0.13857109526572012,
+9.9843695780195716e-6,
+1.5056327351493116e-7]
+if z < 0.5:
+return PI / (math.sin(PI * z) * gamma_lanczos(1 - z))
+z -= 1
+x = C[0]
+for i in range(1, g + 2):
+x += C[i] / (z + i)
+t = z + g + 0.5
+return math.sqrt(2 * PI) * (t ** (z + 0.5)) * math.exp(-t) * x
+
+
+def beta_function(a, b):
+return gamma_lanczos(a) * gamma_lanczos(b) / gamma_lanczos(a + b)
+
+
+def digamma_approx(x, h=1e-5):
+"""Digamma par difference finie sur log-gamma."""
+return (math.log(gamma_lanczos(x + h)) - math.log(gamma_lanczos(x - h))) / (2 * h)
+
+
+def bessel_j0(x):
+"""Bessel J0 par serie."""
+s = 0.0
+for k in range(50):
+s += ((-1) ** k) * ((x / 2) ** (2 * k)) / ((math.factorial(k)) ** 2)
+return s
+
+
+def bessel_j1(x):
+s = 0.0
+for k in range(50):
+s += ((-1) ** k) * ((x / 2) ** (2 * k + 1)) / (math.factorial(k) * math.factorial(k + 1))
+return s
+
+
+def airy_ai(x):
+"""Airy Ai par serie de Taylor."""
+s = 0.0
+for k in range(40):
+s += (x ** (3 * k)) / (math.factorial(k) * math.factorial(int(1.5 * k + 0.5)) * 3 ** (2 * k / 3 + 1 / 3))
+return 0.355028053887817 * s
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ALGEBRE LINEAIRE (stdlib pure)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def mat_dot(A, B):
+n, m = len(A), len(A[0])
+p = len(B[0])
+if len(B) != m:
+raise ValueError("dimensions incompatibles")
+C = [[0.0] * p for _ in range(n)]
+for i in range(n):
+for j in range(p):
+s = 0.0
+for k in range(m):
+s += A[i][k] * B[k][j]
+C[i][j] = s
+return C
+
+
+def mat_transpose(A):
+return [list(row) for row in zip(*A)]
+
+
+def mat_identity(n):
+return [[1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
+
+
+def mat_det(A):
+"""Determinant par elimination de Gauss (pivot partiel)."""
+n = len(A)
+M = [row[:] for row in A]
+det = 1.0
+for i in range(n):
+p = max(range(i, n), key=lambda r: abs(M[r][i]))
+if abs(M[p][i]) < 1e-15:
+return 0.0
+if p != i:
+M[i], M[p] = M[p], M[i]
+det = -det
+det *= M[i][i]
+for r in range(i + 1, n):
+f = M[r][i] / M[i][i]
+for c in range(i, n):
+M[r][c] -= f * M[i][c]
+return det
+
+
+def mat_inverse(A):
+"""Inverse par Gauss-Jordan."""
+n = len(A)
+M = [row[:] + [1.0 if i == j else 0.0 for j in range(n)] for i, row in enumerate(A)]
+for i in range(n):
+p = max(range(i, n), key=lambda r: abs(M[r][i]))
+if abs(M[p][i]) < 1e-15:
+raise ValueError("matrice singuliere")
+M[i], M[p] = M[p], M[i]
+piv = M[i][i]
+for c in range(2 * n):
+M[i][c] /= piv
+for r in range(n):
+if r == i:
+continue
+f = M[r][i]
+for c in range(2 * n):
+M[r][c] -= f * M[i][c]
+return [row[n:] for row in M]
+
+
+def mat_solve(A, b):
+"""Resout Ax = b par Gauss."""
+n = len(A)
+M = [A[i][:] + [b[i]] for i in range(n)]
+for i in range(n):
+p = max(range(i, n), key=lambda r: abs(M[r][i]))
+M[i], M[p] = M[p], M[i]
+piv = M[i][i]
+if abs(piv) < 1e-15:
+raise ValueError("singuliere")
+for r in range(i + 1, n):
+f = M[r][i] / piv
+for c in range(i, n + 1):
+M[r][c] -= f * M[i][c]
+x = [0.0] * n
+for i in range(n - 1, -1, -1):
+s = M[i][n] - sum(M[i][j] * x[j] for j in range(i + 1, n))
+x[i] = s / M[i][i]
+return x
+
+
+def mat_power(A, p):
+n = len(A)
+R = mat_identity(n)
+B = [row[:] for row in A]
+while p > 0:
+if p & 1:
+R = mat_dot(R, B)
+B = mat_dot(B, B)
+p >>= 1
+return R
+
+
+def mat_trace(A):
+return sum(A[i][i] for i in range(len(A)))
+
+
+def mat_norm_fro(A):
+return math.sqrt(sum(A[i][j] ** 2 for i in range(len(A)) for j in range(len(A[0]))))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CALCUL DIFFERENTIEL / INTEGRAL
+# ═══════════════════════════════════════════════════════════════════════════
+
+def derivee(f, x, h=1e-6):
+"""Derivee numerique centree."""
+return (f(x + h) - f(x - h)) / (2 * h)
+
+
+def derivee_seconde(f, x, h=1e-5):
+return (f(x + h) - 2 * f(x) + f(x - h)) / (h * h)
+
+
+def integrale_simpson(f, a, b, n=1000):
+"""Integration numerique par Simpson (n doit etre pair)."""
+if n % 2:
+n += 1
+h = (b - a) / n
+s = f(a) + f(b)
+for i in range(1, n):
+s += (4 if i % 2 else 2) * f(a + i * h)
+return s * h / 3
+
+
+def integrale_trapeze(f, a, b, n=10000):
+h = (b - a) / n
+s = 0.5 * (f(a) + f(b))
+for i in range(1, n):
+s += f(a + i * h)
+return s * h
+
+
+def integrale_gauss(f, a, b, n=50):
+"""Quadrature de Gauss-Legendre a n points (extrait de tables)."""
+# Points et poids pour n=8 (suffisant pour test)
+xs = [-0.9602898564975363, -0.7966664774136267,
+-0.5255324099163290, -0.1834346424956498,
+0.1834346424956498, 0.5255324099163290,
+0.7966664774136267, 0.9602898564975363]
+ws = [ 0.1012285362903763, 0.2223810344533745,
+0.3137066458778873, 0.3626837833783620,
+0.3626837833783620, 0.3137066458778873,
+0.2223810344533745, 0.1012285362903763]
+c = 0.5 * (b - a)
+d = 0.5 * (b + a)
+return c * sum(w * f(c * x + d) for x, w in zip(xs, ws))
+
+
+def newton_raphson(f, df, x0, tol=1e-12, max_iter=100):
+x = x0
+for _ in range(max_iter):
+fx = f(x)
+if abs(fx) < tol:
+return x
+dfx = df(x)
+if abs(dfx) < 1e-15:
+raise ValueError("derivee nulle")
+x = x - fx / dfx
+return x
+
+
+def bissection(f, a, b, tol=1e-12, max_iter=200):
+fa = f(a)
+fb = f(b)
+if fa * fb > 0:
+raise ValueError("f(a) et f(b) doivent etre de signes opposes")
+for _ in range(max_iter):
+m = 0.5 * (a + b)
+fm = f(m)
+if abs(fm) < tol or (b - a) / 2 < tol:
+return m
+if fa * fm < 0:
+b = m
+fb = fm
+else:
+a = m
+fa = fm
+return 0.5 * (a + b)
+
+
+def limite(f, x0, direction="both", h=1e-7):
+if direction == "left":
+return f(x0 - h)
+if direction == "right":
+return f(x0 + h)
+return 0.5 * (f(x0 - h) + f(x0 + h))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# STATISTIQUES
+# ═══════════════════════════════════════════════════════════════════════════
+
+def stats_descriptives(xs):
+n = len(xs)
+if n == 0:
+return {"err": "liste vide"}
+m = sum(xs) / n
+var = sum((x - m) ** 2 for x in xs) / n
+var_s = sum((x - m) ** 2 for x in xs) / (n - 1) if n > 1 else 0.0
+xs_tri = sorted(xs)
+med = xs_tri[n // 2] if n % 2 else 0.5 * (xs_tri[n // 2 - 1] + xs_tri[n // 2])
+return {
+"n": n, "moyenne": m, "variance": var, "variance_echantillon": var_s,
+"ecart_type": math.sqrt(var), "ecart_type_echantillon": math.sqrt(var_s),
+"min": min(xs), "max": max(xs), "mediane": med,
+"somme": sum(xs),
+}
+
+
+def covariance(xs, ys):
+n = len(xs)
+mx = sum(xs) / n
+my = sum(ys) / n
+return sum((xs[i] - mx) * (ys[i] - my) for i in range(n)) / n
+
+
+def correlation(xs, ys):
+cov = covariance(xs, ys)
+sx = math.sqrt(covariance(xs, xs))
+sy = math.sqrt(covariance(ys, ys))
+if sx * sy == 0:
+return 0.0
+return cov / (sx * sy)
+
+
+def regression_lineaire(xs, ys):
+"""Retourne a, b pour y = a*x + b."""
+n = len(xs)
+mx = sum(xs) / n
+my = sum(ys) / n
+num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+den = sum((x - mx) ** 2 for x in xs)
+if den == 0:
+return 0.0, my
+a = num / den
+b = my - a * mx
+return a, b
+
+
+def percentile(xs, p):
+if not xs:
+return None
+s = sorted(xs)
+k = (len(s) - 1) * p / 100.0
+f = math.floor(k)
+c = math.ceil(k)
+if f == c:
+return s[int(k)]
+return s[int(f)] + (s[int(c)] - s[int(f)]) * (k - f)
+
+
+def combinaison(n, k):
+if k < 0 or k > n:
+return 0
+return math.comb(n, k)
+
+
+def arrangement(n, k):
+if k < 0 or k > n:
+return 0
+return math.perm(n, k)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# THEORIE DES NOMBRES
+# ═══════════════════════════════════════════════════════════════════════════
+
+def est_premier(n):
+if n < 2:
+return False
+if n < 4:
+return True
+if n % 2 == 0:
+return False
+i = 3
+while i * i <= n:
+if n % i == 0:
+return False
+i += 2
+return True
+
+
+def crible_eratosthene(n):
+"""Tous les premiers <= n."""
+if n < 2:
+return []
+sieve = [True] * (n + 1)
+sieve[0] = sieve[1] = False
+i = 2
+while i * i <= n:
+if sieve[i]:
+for j in range(i * i, n + 1, i):
+sieve[j] = False
+i += 1
+return [i for i, v in enumerate(sieve) if v]
+
+
+def factorisation(n):
+"""Factorisation en nombres premiers."""
+if n <= 0:
+return {"err": "n doit etre positif"}
+facteurs = {}
+d = 2
+while d * d <= n:
+while n % d == 0:
+facteurs[d] = facteurs.get(d, 0) + 1
+n //= d
+d += 1 if d == 2 else 2
+if n > 1:
+facteurs[n] = facteurs.get(n, 0) + 1
+return facteurs
+
+
+def pgcd(a, b):
+while b:
+a, b = b, a % b
+return abs(a)
+
+
+def ppcm(a, b):
+return abs(a * b) // pgcd(a, b) if a and b else 0
+
+
+def totiente_euler(n):
+"""phi(n) : nombre d'entiers <= n premiers avec n."""
+result = n
+p = 2
+nn = n
+while p * p <= nn:
+if nn % p == 0:
+while nn % p == 0:
+nn //= p
+result -= result // p
+p += 1
+if nn > 1:
+result -= result // nn
+return result
+
+
+def partition_count(n, memo=None):
+"""Nombre de partitions de n (recurrence d'Euler)."""
+if memo is None:
+memo = {}
+if n in memo:
+return memo[n]
+if n == 0:
+return 1
+if n < 0:
+return 0
+s = 0
+k = 1
+while True:
+g1 = k * (3 * k - 1) // 2
+g2 = k * (3 * k + 1) // 2
+if g1 > n and g2 > n:
+break
+signe = 1 if k % 2 else -1
+s += signe * (partition_count(n - g1, memo) + partition_count(n - g2, memo))
+k += 1
+memo[n] = s
+return s
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# FOURIER
+# ═══════════════════════════════════════════════════════════════════════════
+
+def dft(xs):
+"""Transformee de Fourier discrete (implementation directe)."""
+N = len(xs)
+out = []
+for k in range(N):
+s = 0 + 0j
+for n in range(N):
+s += xs[n] * cmath.exp(-2j * math.pi * k * n / N)
+out.append(s)
+return out
+
+
+def idft(Xs):
+N = len(Xs)
+out = []
+for n in range(N):
+s = 0 + 0j
+for k in range(N):
+s += Xs[k] * cmath.exp(2j * math.pi * k * n / N)
+out.append(s / N)
+return out
+
+
+def fft(xs):
+"""FFT recursive (radix-2)."""
+N = len(xs)
+if N & (N - 1):
+raise ValueError("N doit etre puissance de 2")
+if N <= 1:
+return [complex(x) for x in xs]
+pairs = fft(xs[0::2])
+impairs = fft(xs[1::2])
+out = [0j] * N
+for k in range(N // 2):
+t = cmath.exp(-2j * math.pi * k / N) * impairs[k]
+out[k] = pairs[k] + t
+out[k + N // 2] = pairs[k] - t
+return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# EDO
+# ═══════════════════════════════════════════════════════════════════════════
+
+def euler_ode(f, t0, y0, t_end, h=0.01):
+"""Methode d'Euler."""
+t = t0
+y = y0
+pts = [(t, y)]
+while t < t_end:
+y += h * f(t, y)
+t += h
+pts.append((t, y))
+return pts
+
+
+def rk4_ode(f, t0, y0, t_end, h=0.01):
+"""Runge-Kutta d'ordre 4."""
+t = t0
+y = y0
+pts = [(t, y)]
+while t < t_end:
+k1 = f(t, y)
+k2 = f(t + h / 2, y + h * k1 / 2)
+k3 = f(t + h / 2, y + h * k2 / 2)
+k4 = f(t + h, y + h * k3)
+y += h * (k1 + 2 * k2 + 2 * k3 + k4) / 6
+t += h
+pts.append((t, y))
+return pts
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PHYSIQUE
+# ═══════════════════════════════════════════════════════════════════════════
+
+def energie_cinetique(m, v):
+return 0.5 * m * v * v
+
+
+def energie_potentielle(m, g, h):
+return m * g * h
+
+
+def force_gravitation(m1, m2, r, G=6.674e-11):
+return G * m1 * m2 / (r * r)
+
+
+def force_electrique(q1, q2, r, k=8.9875517923e9):
+return k * q1 * q2 / (r * r)
+
+
+def onde_frequence(longueur, vitesse):
+return vitesse / longueur
+
+
+def einstein_energie(m, c=299792458):
+return m * c * c
+
+
+def lorentz_factor(v, c=299792458):
+if abs(v) >= c:
+raise ValueError("v >= c")
+return 1.0 / math.sqrt(1 - (v / c) ** 2)
+
+
+def orbite_circulaire(M, r, G=6.674e-11):
+return math.sqrt(G * M / r)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HTML UI
+# ═══════════════════════════════════════════════════════════════════════════
+
+HTML = r"""<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#000">
+<title>NEXUS SCIENCE v__V__</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{background:#000;color:#fff;font-family:-apple-system,system-ui,sans-serif;
+min-height:100vh;
+background-image:
+radial-gradient(ellipse at 15% 15%, rgba(0,212,255,0.12) 0%, transparent 50%),
+radial-gradient(ellipse at 85% 85%, rgba(168,85,247,0.12) 0%, transparent 50%)}
+.wrap{max-width:900px;margin:0 auto;padding:20px 16px 80px}
+h1{text-align:center;font-size:34px;font-weight:800;letter-spacing:-2px;margin:16px 0 4px;
+background:linear-gradient(90deg,#fff,#00d4ff,#a855f7,#ff6ec7);
+-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sub{text-align:center;color:#666;font-size:10px;letter-spacing:3px;
+text-transform:uppercase;margin-bottom:16px}
+.tabs{display:flex;gap:6px;margin-bottom:16px;flex-wrap:wrap;justify-content:center}
+.tab{padding:8px 14px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
+color:#aaa;border-radius:20px;font-size:11px;cursor:pointer;font-family:inherit}
+.tab.on{background:#00d4ff;color:#000;border-color:#00d4ff;font-weight:600}
+.panel{display:none}.panel.on{display:block}
+.card{background:rgba(20,20,30,0.7);border:1px solid rgba(255,255,255,0.08);
+border-radius:14px;padding:16px;margin-bottom:12px}
+.card h3{color:#00d4ff;font-size:12px;letter-spacing:2px;margin-bottom:10px;text-transform:uppercase}
+textarea,input,select,button{font-family:inherit;font-size:13px;padding:10px 14px;border-radius:8px;
+border:1px solid rgba(255,255,255,0.1);background:rgba(0,0,0,0.4);color:#fff;
+outline:none;width:100%;margin-bottom:8px}
+textarea{min-height:100px;resize:vertical;font-family:Menlo,monospace;font-size:12px}
+input:focus,textarea:focus,select:focus{border-color:#00d4ff}
+button{background:linear-gradient(135deg,#00d4ff,#a855f7);color:#000;font-weight:600;
+cursor:pointer;border:none;width:auto;min-width:120px}
+button:active{transform:scale(0.97)}
+button.sec{background:rgba(255,255,255,0.08);color:#fff}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}
+pre{background:rgba(0,0,0,0.5);padding:12px;border-radius:8px;color:#a5f3fc;
+font-family:Menlo,monospace;font-size:11px;overflow-x:auto;white-space:pre-wrap;
+word-break:break-word;border-left:2px solid #00d4ff;max-height:400px;margin-top:8px}
+.empty{text-align:center;padding:20px;color:#555;font-size:13px}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;
+font-family:monospace;background:rgba(0,212,255,0.15);color:#00d4ff;margin-right:4px}
+.pill.g{background:rgba(74,222,128,0.15);color:#4ade80}
+.pill.r{background:rgba(248,113,113,0.15);color:#f87171}
+.row{display:flex;justify-content:space-between;padding:6px 0;font-size:12px;
+font-family:monospace;border-bottom:1px solid rgba(255,255,255,0.05)}
+.row:last-child{border:none}
+.kv{color:#fff;font-family:monospace;font-size:12px;word-break:break-all}
+</style></head><body>
+<div class="wrap">
+<h1>SCIENCE</h1>
+<p class="sub">Moteur scientifique local · v__V__ · stdlib pure</p>
+
+<div class="tabs">
+<div class="tab on" data-tab="omega">Omega</div>
+<div class="tab" data-tab="linalg">Algebre</div>
+<div class="tab" data-tab="calcul">Calcul</div>
+<div class="tab" data-tab="stats">Stats</div>
+<div class="tab" data-tab="nombres">Nombres</div>
+<div class="tab" data-tab="fourier">Fourier</div>
+<div class="tab" data-tab="physique">Physique</div>
+<div class="tab" data-tab="constantes">Constantes</div>
+</div>
+
+<div class="panel on" id="p-omega">
+<div class="card">
+<h3>Fonctions speciales</h3>
+<select id="o-fn">
+<option value="omega">Omega (W(1))</option>
+<option value="lambert">Lambert W(x)</option>
+<option value="zeta">Riemann zeta(s)</option>
+<option value="gamma">Gamma(z)</option>
+<option value="beta">Beta(a,b)</option>
+<option value="digamma">Digamma(x)</option>
+<option value="besselj0">Bessel J0(x)</option>
+<option value="besselj1">Bessel J1(x)</option>
+<option value="airy">Airy Ai(x)</option>
+</select>
+<input id="o-a" placeholder="argument 1 (si besoin)">
+<input id="o-b" placeholder="argument 2 (si besoin)">
+<div class="actions">
+<button onclick="calculOmega()">Calculer</button>
+</div>
+<pre id="o-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-linalg">
+<div class="card">
+<h3>Algebre lineaire</h3>
+<select id="la-fn">
+<option value="det">Determinant</option>
+<option value="inv">Inverse</option>
+<option value="trans">Transposee</option>
+<option value="trace">Trace</option>
+<option value="norm">Norme Frobenius</option>
+<option value="solve">Resoudre Ax = b</option>
+</select>
+<textarea id="la-A" placeholder="Matrice A (format JSON : [[1,2],[3,4]])">[[1,2],[3,4]]</textarea>
+<textarea id="la-b" placeholder="Vecteur b (pour solve) : [5,11]">[5,11]</textarea>
+<div class="actions">
+<button onclick="calculLin()">Calculer</button>
+</div>
+<pre id="la-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-calcul">
+<div class="card">
+<h3>Calcul differentiel / integral</h3>
+<p style="color:#888;font-size:12px;margin-bottom:8px">
+Syntaxe : x**2 + 3*x - 1, sin(x), cos(x), exp(x), log(x), sqrt(x)
+</p>
+<input id="c-expr" value="x**2 + 3*x - 1" placeholder="f(x)">
+<input id="c-a" value="0" placeholder="borne a ou point x0">
+<input id="c-b" value="1" placeholder="borne b">
+<select id="c-fn">
+<option value="deriv">Derivee en x0</option>
+<option value="deriv2">Derivee seconde en x0</option>
+<option value="integ_simpson">Integrale Simpson [a,b]</option>
+<option value="integ_trapeze">Integrale trapeze [a,b]</option>
+<option value="newton">Newton-Raphson (racine)</option>
+<option value="bissection">Bissection (racine)</option>
+<option value="limite">Limite en x0</option>
+</select>
+<div class="actions">
+<button onclick="calculCalc()">Calculer</button>
+</div>
+<pre id="c-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-stats">
+<div class="card">
+<h3>Statistiques</h3>
+<input id="s-data" value="1,2,3,4,5,6,7,8,9,10" placeholder="Liste (separes par virgule)">
+<input id="s-data2" placeholder="2e liste (pour correlation/regression)">
+<select id="s-fn">
+<option value="desc">Descriptives</option>
+<option value="corr">Correlation</option>
+<option value="reg">Regression lineaire</option>
+<option value="perc">Percentile</option>
+</select>
+<input id="s-p" placeholder="p (pour percentile, 0-100)" value="50">
+<div class="actions">
+<button onclick="calculStats()">Calculer</button>
+</div>
+<pre id="s-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-nombres">
+<div class="card">
+<h3>Theorie des nombres</h3>
+<input id="n" value="123456789" placeholder="Nombre n">
+<select id="n-fn">
+<option value="prime">Est premier ?</option>
+<option value="fact">Factorisation</option>
+<option value="phi">Totiente Euler phi(n)</option>
+<option value="part">Partitions p(n)</option>
+<option value="crible">Crible <= n</option>
+<option value="pgcd">PGCD(a,b) / PPCM(a,b)</option>
+<option value="comb">Combinaison C(n,k) / Arrangement A(n,k)</option>
+</select>
+<input id="n-k" placeholder="k (2e arg pour pgcd/comb)" value="12">
+<div class="actions">
+<button onclick="calculNombres()">Calculer</button>
+</div>
+<pre id="n-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-fourier">
+<div class="card">
+<h3>Transformee de Fourier</h3>
+<input id="f-data" value="1,1,1,1,0,0,0,0" placeholder="Signal (N=2^k pour FFT)">
+<select id="f-fn">
+<option value="dft">DFT</option>
+<option value="fft">FFT (N puissance de 2)</option>
+<option value="idft">DFT inverse</option>
+</select>
+<div class="actions">
+<button onclick="calculFourier()">Calculer</button>
+</div>
+<pre id="f-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-physique">
+<div class="card">
+<h3>Physique</h3>
+<select id="ph-fn">
+<option value="ec">Energie cinetique (m,v)</option>
+<option value="ep">Energie potentielle (m,g,h)</option>
+<option value="grav">Force gravitationnelle (m1,m2,r)</option>
+<option value="elec">Force electrique (q1,q2,r)</option>
+<option value="einstein">E = mc^2 (m)</option>
+<option value="lorentz">Facteur de Lorentz (v)</option>
+<option value="orbite">Vitesse orbite circulaire (M,r)</option>
+</select>
+<input id="ph-a" placeholder="arg1">
+<input id="ph-b" placeholder="arg2">
+<input id="ph-c" placeholder="arg3">
+<div class="actions">
+<button onclick="calculPhys()">Calculer</button>
+</div>
+<pre id="ph-out">Pret.</pre>
+</div>
+</div>
+
+<div class="panel" id="p-constantes">
+<div class="card">
+<h3>Constantes</h3>
+<button class="sec" onclick="loadConstantes()">Charger</button>
+<pre id="co-out">Pret.</pre>
+</div>
+</div>
+</div>
+
+<script>
+var tab='omega';
+document.querySelectorAll('.tab').forEach(function(t){
+t.onclick=function(){
+document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('on');});
+document.querySelectorAll('.panel').forEach(function(x){x.classList.remove('on');});
+t.classList.add('on');
+tab=t.dataset.tab;
+document.getElementById('p-'+tab).classList.add('on');
+};
+});
+
+function esc(t){
+var d=document.createElement('div');
+d.textContent=(t===null||t===undefined)?'':String(t);
+return d.innerHTML;
+}
+
+async function post(u,body){
+try{
+var r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify(body||{})});
+return await r.json();
+}catch(e){
+return {ok:false,err:'reseau : '+e.message};
+}
+}
+
+async function get(u){
+try{ var r=await fetch(u); return await r.json(); }
+catch(e){ return {ok:false,err:'reseau : '+e.message}; }
+}
+
+async function calculOmega(){
+var out=document.getElementById('o-out');
+out.textContent='Calcul...';
+var r=await post('/api/omega',{
+fn: document.getElementById('o-fn').value,
+a: document.getElementById('o-a').value,
+b: document.getElementById('o-b').value
+});
+out.textContent=JSON.stringify(r,null,2);
+}
+
+async function calculLin(){
+var out=document.getElementById('la-out');
+out.textContent='Calcul...';
+var r=await post('/api/linalg',{
+fn: document.getElementById('la-fn').value,
+A: document.getElementById('la-A').value,
+b: document.getElementById('la-b').value
+});
+out.textContent=JSON.stringify(r,null,2);
+}
+
+async function calculCalc(){
+var out=document.getElementById('c-out');
+out.textContent='Calcul...';
+var r=await post('/api/calcul',{
+fn: document.getElementById('c-fn').value,
+expr: document.getElementById('c-expr').value,
+a: document.getElementById('c-a').value,
+b: document.getElementById('c-b').value
+});
+out.textContent=JSON.stringify(r,null,2);
+}
+
+async function calculStats(){
+var out=document.getElementById('s-out');
+out.textContent='Calcul...';
+var r=await post('/api/stats',{
+fn: document.getElementById('s-fn').value,
+data: document.getElementById('s-data').value,
+data2: document.getElementById('s-data2').value,
+p: document.getElementById('s-p').value
+});
+out.textContent=JSON.stringify(r,null,2);
+}
+
+async function calculNombres(){
+var out=document.getElementById('n-out');
+out.textContent='Calcul...';
+var r=await post('/api/nombres',{
+fn: document.getElementById('n-fn').value,
+n: document.getElementById('n').value,
+k: document.getElementById('n-k').value
+});
+out.textContent=JSON.stringify(r,null,2);
+}
+
+async function calculFourier(){
+var out=document.getElementById('f-out');
+out.textContent='Calcul...';
+var r=await post('/api/fourier',{
+fn: document.getElementById('f-fn').value,
+data: document.getElementById('f-data').value
+});
+out.textContent=JSON.stringify(r,null,2);
+}
+
+async function calculPhys(){
+var out=document.getElementById('ph-out');
+out.textContent='Calcul...';
+var r=await post('/api/physique',{
+fn: document.getElementById('ph-fn').value,
+a: document.getElementById('ph-a').value,
+b: document.getElementById('ph-b').value,
+c: document.getElementById('ph-c').value
+});
+out.textContent=JSON.stringify(r,null,2);
+}
+
+async function loadConstantes(){
+var out=document.getElementById('co-out');
+var r=await get('/api/constantes');
+out.textContent=JSON.stringify(r,null,2);
+}
+</script>
+</body></html>
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PARSER EXPRESSION (safe)
+# ═══════════════════════════════════════════════════════════════════════════
+
+FONCTIONS_MATH = {
+"sin": math.sin, "cos": math.cos, "tan": math.tan,
+"asin": math.asin, "acos": math.acos, "atan": math.atan,
+"sinh": math.sinh, "cosh": math.cosh, "tanh": math.tanh,
+"exp": math.exp, "log": math.log, "ln": math.log,
+"log10": math.log10, "sqrt": math.sqrt,
+"abs": abs, "floor": math.floor, "ceil": math.ceil,
+"sign": lambda x: 1 if x > 0 else (-1 if x < 0 else 0),
+}
+
+CONSTANTES_EXPR = {
+"pi": PI, "e": E, "phi": PHI, "omega": OMEGA_CONST,
+"gamma": GAMMA_EULER, "catalan": CATALAN,
+}
+
+
+def parser_expr(expr):
+"""Retourne une fonction f(x) a partir d'une expression."""
+expr = expr.strip()
+if not expr:
+raise ValueError("expression vide")
+
+def f(x):
+env = dict(CONSTANTES_EXPR)
+env.update(FONCTIONS_MATH)
+env["x"] = x
+try:
+return eval(expr, {"__builtins__": {}}, env)
+except Exception as e:
+raise ValueError("expr err : " + str(e)[:100])
+
+return f
+
+
+def parser_liste(s):
+if isinstance(s, list):
+return [float(x) for x in s]
+s = (s or "").strip()
+if not s:
+return []
+return [float(x.strip()) for x in s.split(",") if x.strip()]
+
+
+def parser_matrice(s):
+if isinstance(s, list):
+return [[float(x) for x in row] for row in s]
+return [[float(x) for x in row] for row in json.loads(s)]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# DISPATCHERS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def dispatch_omega(fn, a, b):
+try:
+if fn == "omega":
+return {"ok": True, "resultat": omega_constant_iter(),
+"constante_officielle": OMEGA_CONST}
+if fn == "lambert":
+return {"ok": True, "resultat": lambert_w(float(a))}
+if fn == "zeta":
+return {"ok": True, "resultat": zeta_approx(float(a))}
+if fn == "gamma":
+return {"ok": True, "resultat": gamma_lanczos(float(a))}
+if fn == "beta":
+return {"ok": True, "resultat": beta_function(float(a), float(b))}
+if fn == "digamma":
+return {"ok": True, "resultat": digamma_approx(float(a))}
+if fn == "besselj0":
+return {"ok": True, "resultat": bessel_j0(float(a))}
+if fn == "besselj1":
+return {"ok": True, "resultat": bessel_j1(float(a))}
+if fn == "airy":
+return {"ok": True, "resultat": airy_ai(float(a))}
+return {"ok": False, "err": "fonction inconnue"}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def dispatch_linalg(fn, A_str, b_str):
+try:
+A = parser_matrice(A_str)
+if fn == "det":
+return {"ok": True, "resultat": mat_det(A)}
+if fn == "inv":
+return {"ok": True, "resultat": mat_inverse(A)}
+if fn == "trans":
+return {"ok": True, "resultat": mat_transpose(A)}
+if fn == "trace":
+return {"ok": True, "resultat": mat_trace(A)}
+if fn == "norm":
+return {"ok": True, "resultat": mat_norm_fro(A)}
+if fn == "solve":
+b = json.loads(b_str) if isinstance(b_str, str) else b_str
+b = [float(x) for x in b]
+return {"ok": True, "resultat": mat_solve(A, b)}
+return {"ok": False, "err": "fonction inconnue"}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def dispatch_calcul(fn, expr, a, b):
+try:
+f = parser_expr(expr)
+a_f = float(a) if a else 0.0
+b_f = float(b) if b else 1.0
+if fn == "deriv":
+return {"ok": True, "resultat": derivee(f, a_f)}
+if fn == "deriv2":
+return {"ok": True, "resultat": derivee_seconde(f, a_f)}
+if fn == "integ_simpson":
+return {"ok": True, "resultat": integrale_simpson(f, a_f, b_f)}
+if fn == "integ_trapeze":
+return {"ok": True, "resultat": integrale_trapeze(f, a_f, b_f)}
+if fn == "newton":
+df = lambda x: derivee(f, x)
+return {"ok": True, "resultat": newton_raphson(f, df, a_f)}
+if fn == "bissection":
+return {"ok": True, "resultat": bissection(f, a_f, b_f)}
+if fn == "limite":
+return {"ok": True, "resultat": limite(f, a_f)}
+return {"ok": False, "err": "fonction inconnue"}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def dispatch_stats(fn, data, data2, p):
+try:
+xs = parser_liste(data)
+if fn == "desc":
+return {"ok": True, "resultat": stats_descriptives(xs)}
+if fn == "corr":
+ys = parser_liste(data2)
+return {"ok": True, "resultat": correlation(xs, ys)}
+if fn == "reg":
+ys = parser_liste(data2)
+a, b = regression_lineaire(xs, ys)
+return {"ok": True, "a": a, "b": b,
+"equation": "y = {}*x + {}".format(round(a, 6), round(b, 6))}
+if fn == "perc":
+return {"ok": True, "resultat": percentile(xs, float(p))}
+return {"ok": False, "err": "fonction inconnue"}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def dispatch_nombres(fn, n, k):
+try:
+n_i = int(n)
+k_i = int(k) if k else 0
+if fn == "prime":
+return {"ok": True, "resultat": est_premier(n_i)}
+if fn == "fact":
+return {"ok": True, "resultat": factorisation(n_i)}
+if fn == "phi":
+return {"ok": True, "resultat": totiente_euler(n_i)}
+if fn == "part":
+return {"ok": True, "resultat": partition_count(n_i)}
+if fn == "crible":
+if n_i > 1000000:
+return {"ok": False, "err": "n trop grand (max 1 000 000)"}
+premiers = crible_eratosthene(n_i)
+return {"ok": True, "count": len(premiers),
+"resultat": premiers[:500]}
+if fn == "pgcd":
+return {"ok": True, "pgcd": pgcd(n_i, k_i), "ppcm": ppcm(n_i, k_i)}
+if fn == "comb":
+return {"ok": True, "C(n,k)": combinaison(n_i, k_i),
+"A(n,k)": arrangement(n_i, k_i)}
+return {"ok": False, "err": "fonction inconnue"}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def dispatch_fourier(fn, data):
+try:
+xs = parser_liste(data)
+if fn == "dft":
+res = dft(xs)
+return {"ok": True, "N": len(res),
+"reels": [round(z.real, 6) for z in res],
+"imag": [round(z.imag, 6) for z in res],
+"modules": [round(abs(z), 6) for z in res]}
+if fn == "fft":
+res = fft(xs)
+return {"ok": True, "N": len(res),
+"reels": [round(z.real, 6) for z in res],
+"imag": [round(z.imag, 6) for z in res],
+"modules": [round(abs(z), 6) for z in res]}
+if fn == "idft":
+res = idft(xs)
+return {"ok": True, "N": len(res),
+"resultat": [round(z.real, 6) for z in res]}
+return {"ok": False, "err": "fonction inconnue"}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def dispatch_physique(fn, a, b, c):
+try:
+a_f = float(a) if a else 0.0
+b_f = float(b) if b else 0.0
+c_f = float(c) if c else 0.0
+if fn == "ec":
+return {"ok": True, "resultat": energie_cinetique(a_f, b_f), "unite": "J"}
+if fn == "ep":
+g = b_f if b_f else 9.81
+return {"ok": True, "resultat": energie_potentielle(a_f, g, c_f), "unite": "J"}
+if fn == "grav":
+return {"ok": True, "resultat": force_gravitation(a_f, b_f, c_f), "unite": "N"}
+if fn == "elec":
+return {"ok": True, "resultat": force_electrique(a_f, b_f, c_f), "unite": "N"}
+if fn == "einstein":
+return {"ok": True, "resultat": einstein_energie(a_f), "unite": "J"}
+if fn == "lorentz":
+return {"ok": True, "resultat": lorentz_factor(a_f)}
+if fn == "orbite":
+return {"ok": True, "resultat": orbite_circulaire(a_f, b_f), "unite": "m/s"}
+return {"ok": False, "err": "fonction inconnue"}
+except Exception as e:
+return {"ok": False, "err": str(e)[:200]}
+
+
+def constantes_liste():
+return {
+"pi": PI, "e": E, "phi": PHI, "gamma_euler": GAMMA_EULER,
+"omega": OMEGA_CONST, "catalan": CATALAN, "apery": APERY,
+"khinchin": KHINCHIN, "glaisher": GLAISHER,
+"feigenbaum_delta": FEIGENBAUM_D, "feigenbaum_alpha": FEIGENBAUM_A,
+"vitesse_lumiere": 299792458.0,
+"constante_gravitation": 6.674e-11,
+"constante_planck": 6.62607015e-34,
+"charge_elementaire": 1.602176634e-19,
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HANDLER
+# ═══════════════════════════════════════════════════════════════════════════
+
+class Handler(BaseHTTPRequestHandler):
+server_version = "NexusScience/" + VERSION
+protocol_version = "HTTP/1.1"
+
+def log_message(self, *a):
+pass
+
+def _send(self, code, body, ctype="application/json; charset=utf-8"):
+if isinstance(body, str):
+body = body.encode("utf-8")
+try:
+self.send_response(code)
+self.send_header("Content-Type", ctype)
+self.send_header("Content-Length", str(len(body)))
+self.send_header("Access-Control-Allow-Origin", "*")
+self.end_headers()
+self.wfile.write(body)
+except (BrokenPipeError, ConnectionResetError):
+pass
+
+def _json(self, code, obj):
+self._send(code, json.dumps(obj, indent=2, ensure_ascii=False, default=str))
+
+def _html(self, code, text):
+self._send(code, text, "text/html; charset=utf-8")
+
+def _body_json(self):
+try:
+length = int(self.headers.get("Content-Length", "0") or "0")
+except Exception:
+length = 0
+if length <= 0 or length > 2_000_000:
+return {}
+try:
+return json.loads(self.rfile.read(length).decode("utf-8", "ignore") or "{}")
+except Exception:
+return {}
+
+def _parse(self):
+p = urllib.parse.urlparse(self.path)
+return p.path, urllib.parse.parse_qs(p.query)
+
+def do_GET(self):
+path, qs = self._parse()
+try:
+if path in ("/", "/index.html"):
+return self._html(200, HTML.replace("__V__", VERSION))
+
+if path == "/api/status":
+return self._json(200, {
+"ok": True, "version": VERSION, "auteur": AUTEUR,
+"host": HOST, "port": PORT, "log": LOG_FILE,
+})
+
+if path == "/api/constantes":
+return self._json(200, {"ok": True,
+"constantes": constantes_liste()})
+
+if path == "/api/ping":
+return self._json(200, {"ok": True, "ping": "pong"})
+
+return self._json(404, {"ok": False, "err": "route inconnue"})
+except Exception as e:
+log("GET err " + str(e)[:150])
+return self._json(500, {"ok": False, "err": str(e)[:200]})
+
+def do_POST(self):
+path, qs = self._parse()
+try:
+data = self._body_json()
+
+if path == "/api/omega":
+r = dispatch_omega(data.get("fn", ""),
+data.get("a", "0"), data.get("b", "0"))
+return self._json(200, r)
+
+if path == "/api/linalg":
+r = dispatch_linalg(data.get("fn", ""),
+data.get("A", "[[1]]"),
+data.get("b", "[]"))
+return self._json(200, r)
+
+if path == "/api/calcul":
+r = dispatch_calcul(data.get("fn", ""),
+data.get("expr", "x"),
+data.get("a", "0"),
+data.get("b", "1"))
+return self._json(200, r)
+
+if path == "/api/stats":
+r = dispatch_stats(data.get("fn", ""),
+data.get("data", ""),
+data.get("data2", ""),
+data.get("p", "50"))
+return self._json(200, r)
+
+if path == "/api/nombres":
+r = dispatch_nombres(data.get("fn", ""),
+data.get("n", "1"),
+data.get("k", "1"))
+return self._json(200, r)
+
+if path == "/api/fourier":
+r = dispatch_fourier(data.get("fn", ""),
+data.get("data", ""))
+return self._json(200, r)
+
+if path == "/api/physique":
+r = dispatch_physique(data.get("fn", ""),
+data.get("a", "0"),
+data.get("b", "0"),
+data.get("c", "0"))
+return self._json(200, r)
+
+return self._json(404, {"ok": False, "err": "route inconnue"})
+except Exception as e:
+log("POST err " + str(e)[:150])
+log(traceback.format_exc()[-500:])
+return self._json(500, {"ok": False, "err": str(e)[:200]})
+
+def do_OPTIONS(self):
+try:
+self.send_response(204)
+self.send_header("Access-Control-Allow-Origin", "*")
+self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+self.send_header("Access-Control-Allow-Headers", "*")
+self.send_header("Content-Length", "0")
+self.end_headers()
+except Exception:
+pass
+
+
+class Server(ThreadingMixIn, HTTPServer):
+daemon_threads = True
+allow_reuse_address = True
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════
+
+def port_libre(host, port):
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+s.settimeout(1)
+s.bind((host, port))
+return True
+except OSError:
+return False
+finally:
+try:
+s.close()
+except Exception:
+pass
+
+
+def trouver_port(host, start, max_tries=20):
+for p in range(start, start + max_tries):
+if port_libre(host, p):
+return p
+return None
+
+
+def main():
+print("")
+print("=" * 78)
+print(" NEXUS SCIENTIFIC COMPUTING ENGINE v" + VERSION)
+print(" Auteur : " + AUTEUR + " | Licence : " + LICENCE)
+print("=" * 78)
+print("")
+print(" Moteur scientifique stdlib pure :")
+print(" - Omega, Lambert W, Zeta, Gamma, Beta, Bessel, Airy")
+print(" - Algebre lineaire : det, inv, solve, transpose, trace")
+print(" - Calcul : derivee, integrale, racine, limite")
+print(" - Stats : descriptives, correlation, regression")
+print(" - Theorie des nombres : premiers, factorisation, partitions")
+print(" - Fourier : DFT, FFT, IDFT")
+print(" - Physique : energie, forces, Einstein, Lorentz, orbite")
+print("")
+print(" Base : " + BASE)
+print(" Log : " + LOG_FILE)
+print("")
+
+port = PORT
+if not port_libre(HOST, port):
+print(" Port " + str(port) + " occupe, recherche...")
+nouveau = trouver_port(HOST, port + 1)
+if nouveau is None:
+print(" Aucun port libre.")
+return
+port = nouveau
+
+print(" Local : http://localhost:" + str(port) + "/")
+print(" Ou : http://127.0.0.1:" + str(port) + "/")
+print("")
+print(" API :")
+print(" POST /api/omega {fn, a, b}")
+print(" POST /api/linalg {fn, A, b}")
+print(" POST /api/calcul {fn, expr, a, b}")
+print(" POST /api/stats {fn, data, data2, p}")
+print(" POST /api/nombres {fn, n, k}")
+print(" POST /api/fourier {fn, data}")
+print(" POST /api/physique {fn, a, b, c}")
+print(" GET /api/constantes")
+print("")
+print(" Ctrl+C pour arreter")
+print("")
+
+log("=== NEXUS SCIENCE v" + VERSION + " ===")
+
+try:
+srv = Server((HOST, port), Handler)
+except OSError as e:
+print(" Erreur bind : " + str(e))
+return
+
+print(" Serveur pret.")
+print("")
+try:
+srv.serve_forever()
+except KeyboardInterrupt:
+print("")
+print(" Arrete.")
+print("")
+finally:
+try:
+srv.server_close()
+except Exception:
+pass
+
+
+if __name__ == "__main__":
+try:
+main()
+except Exception as e:
+print(" ERREUR FATALE : " + str(e))
