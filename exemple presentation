@@ -1,0 +1,684 @@
+#!/usr/bin/env python3# -*- coding: utf-8 -*-
+"""
+═══════════════════════════════════════════════════════════════════════════
+NEXUS SLIDESHOW VIDEO MAKER v1.0.1
+═══════════════════════════════════════════════════════════════════════════
+Générateur local de diaporama animé présentant le protocole
+NEXUS Scientific Computing Engine.
+
+Auteur : Aissa Mohammedi (DGK)
+Licence : NEXUS-OPEN-2.0
+═══════════════════════════════════════════════════════════════════════════
+"""
+
+import os
+import sys
+import json
+import time
+import socket
+import threading
+from pathlib import Path
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
+from urllib.parse import urlparse, parse_qs
+
+VERSION = "1.0.1"
+AUTEUR = "Aissa Mohammedi (DGK)"
+LICENCE = "NEXUS-OPEN-2.0"
+CODENAME = "Scientific Slideshow Engine"
+
+HOME = Path.home()
+BASE = HOME / "Documents" / "nexus_slideshow"
+ASSETS = BASE / "assets"
+EXPORT = BASE / "export"
+
+for d in (BASE, ASSETS, EXPORT):
+d.mkdir(parents=True, exist_ok=True)
+
+HOST = "127.0.0.1"
+PORT = 8719
+
+
+SLIDES = [
+{"id": 1, "type": "cover", "title": "NEXUS",
+"subtitle": "Scientific Computing Engine",
+"tagline": "Full scientific toolbox. One file. Zero dependencies.",
+"accent": "cyan", "duration": 6},
+{"id": 2, "type": "quote", "title": "The problem",
+"text": "Scientific Python means 500 MB of compiled dependencies. NumPy. SciPy. SymPy. Pandas. Matplotlib. Wheels that break on mobile. Builds that fail on musl. Version conflicts that never end.",
+"accent": "rose", "duration": 8},
+{"id": 3, "type": "statement", "title": "The answer",
+"lines": ["One Python file.", "Pure standard library.",
+"Python 3.8+ everywhere.", "Zero pip install."],
+"accent": "cyan", "duration": 7},
+{"id": 4, "type": "features", "title": "Eight domains",
+"items": [
+{"icon": "Ω", "label": "Special functions", "detail": "Ω · W · ζ · Γ · B · J · Ai"},
+{"icon": "A", "label": "Linear algebra", "detail": "det · inv · solve · power"},
+{"icon": "∂", "label": "Calculus", "detail": "deriv · integ · root · limite"},
+{"icon": "σ", "label": "Statistics", "detail": "mean · var · corr · OLS"},
+{"icon": "π", "label": "Number theory", "detail": "prime · factor · φ · p(n)"},
+{"icon": "∿", "label": "Fourier", "detail": "DFT · FFT · IDFT"},
+{"icon": "E", "label": "Physics", "detail": "E · F · γ · orbite"},
+{"icon": "C", "label": "Constants", "detail": "π · e · φ · γ · Ω"},
+], "accent": "gold", "duration": 10},
+{"id": 5, "type": "formula", "title": "Omega constant",
+"formula": "x · e^x = 1",
+"result": "Ω = 0.5671432904097838729999686622...",
+"note": "Unique real solution. Equals W(1). Fixed-point iteration: x_{n+1} = e^{-x_n}",
+"accent": "cyan", "duration": 8},
+{"id": 6, "type": "formula", "title": "Lambert W",
+"formula": "W(x) · e^{W(x)} = x",
+"result": "Computed via Halley's method (cubic convergence)",
+"note": "Two real branches: W₀ for x ≥ -1/e, W₋₁ for -1/e ≤ x < 0",
+"accent": "cyan", "duration": 8},
+{"id": 7, "type": "formula", "title": "Riemann zeta",
+"formula": "ζ(s) = Σ k^{-s}",
+"result": "ζ(3) = 1.2020569031595943...",
+"note": "Apéry's constant. Direct summation with reflection formula for s < 1.",
+"accent": "violet", "duration": 8},
+{"id": 8, "type": "formula", "title": "Gamma function",
+"formula": "Γ(z) = ∫ t^{z-1} e^{-t} dt",
+"result": "Γ(5) = 24, Γ(0.5) = √π",
+"note": "Lanczos approximation, g=7, 9 coefficients. ~15 digits accuracy.",
+"accent": "gold", "duration": 8},
+{"id": 9, "type": "formula", "title": "Bessel functions",
+"formula": "x² y'' + x y' + (x² - n²) y = 0",
+"result": "J_n(x) via power series",
+"note": "Solutions of Bessel's differential equation. J₀ and J₁ implemented.",
+"accent": "cyan", "duration": 7},
+{"id": 10, "type": "formula", "title": "Linear algebra",
+"formula": "A · x = b",
+"result": "x = A⁻¹ · b via Gaussian elimination",
+"note": "O(n³) complexity. Partial pivoting for numerical stability.",
+"accent": "violet", "duration": 7},
+{"id": 11, "type": "formula", "title": "Numerical integration",
+"formula": "∫ f(x) dx ≈ (h/3) [f(a) + 4Σ + 2Σ + f(b)]",
+"result": "Simpson's rule, O(h⁴) error",
+"note": "Also trapezoidal rule and Gauss-Legendre quadrature.",
+"accent": "gold", "duration": 7},
+{"id": 12, "type": "formula", "title": "Root finding",
+"formula": "x_{n+1} = x_n - f(x_n)/f'(x_n)",
+"result": "Newton-Raphson: quadratic convergence",
+"note": "Bisection alternative: guaranteed convergence, linear rate.",
+"accent": "cyan", "duration": 7},
+{"id": 13, "type": "formula", "title": "Fast Fourier Transform",
+"formula": "X_k = Σ x_n e^{-2πikn/N}",
+"result": "Radix-2 Cooley-Tukey, O(N log N)",
+"note": "N must be power of 2. FFT for N=8 in ~24 multiplications.",
+"accent": "rose", "duration": 8},
+{"id": 14, "type": "formula", "title": "Number theory",
+"formula": "p(n) = Σ (-1)^{k-1} p(n - k(3k-1)/2)",
+"result": "p(100) = 190 569 292",
+"note": "Euler's pentagonal recurrence. Also: primality, sieve, factorization, totient.",
+"accent": "gold", "duration": 8},
+{"id": 15, "type": "formula", "title": "Physics",
+"formula": "E = m c²",
+"result": "Lorentz factor γ = 1/√(1 - v²/c²)",
+"note": "Also: kinetic energy, potential energy, gravitational and electric forces, circular orbits.",
+"accent": "cyan", "duration": 8},
+{"id": 16, "type": "stats", "title": "Traction",
+"items": [
+{"value": "1", "label": "Python file"},
+{"value": "0", "label": "Dependencies"},
+{"value": "8", "label": "Domains"},
+{"value": "50 KB", "label": "Total size"},
+{"value": "3.8+", "label": "Python min"},
+{"value": "100%", "label": "Offline"},
+], "accent": "cyan", "duration": 7},
+{"id": 17, "type": "code", "title": "Quick start",
+"code": [
+"$ curl -O https://raw.githubusercontent.com/.../nexus_science.py",
+"$ python3 nexus_science.py",
+"",
+" → http://localhost:8920/",
+"",
+"$ curl -X POST http://localhost:8920/api/omega \\",
+" -d '{\"fn\":\"omega\"}'",
+"",
+" { \"resultat\": 0.5671432904097838 }",
+], "accent": "gold", "duration": 9},
+{"id": 18, "type": "cover", "title": "NEXUS",
+"subtitle": "Scientific Computing Engine",
+"tagline": "Built by Aissa Mohammedi (DGK) — NEXUS-OPEN-2.0",
+"accent": "violet", "duration": 6},
+]
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# HTML — version corrigée, JavaScript complet
+# ═══════════════════════════════════════════════════════════════════════════
+
+HTML_MAIN = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NEXUS Science — Slideshow</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-font-smoothing:antialiased}
+:root{
+--bg:#02040a; --bg-card:#0a1018; --border:#1a2540;
+--cyan:#00d4ff; --gold:#c8a45c; --rose:#ff6ec7; --violet:#a855f7;
+--green:#00ff88; --red:#ff4466;
+--text:#e0e8f0; --dim:#6a7a8a;
+--mono:ui-monospace,'SF Mono',Menlo,monospace;
+--sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+--serif:'Iowan Old Style','Apple Garamond',Georgia,serif;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);
+font-family:var(--sans);user-select:none}
+body::before{content:'';position:fixed;inset:0;pointer-events:none;
+background:
+radial-gradient(ellipse at 15% 15%,rgba(0,212,255,0.12),transparent 50%),
+radial-gradient(ellipse at 85% 85%,rgba(168,85,247,0.12),transparent 50%),
+radial-gradient(ellipse at 50% 50%,rgba(255,110,199,0.05),transparent 70%);
+z-index:0}
+#stage{position:relative;z-index:1;width:100%;height:100vh;
+display:flex;align-items:center;justify-content:center;overflow:hidden}
+.slide{position:absolute;width:min(1100px,90vw);height:min(680px,85vh);
+padding:60px 80px;background:rgba(10,16,24,0.72);
+border:1px solid var(--border);border-radius:24px;
+backdrop-filter:blur(20px);display:flex;flex-direction:column;justify-content:center;
+opacity:0;transform:translateY(40px) scale(0.96);
+transition:all 1s cubic-bezier(0.16,1,0.3,1);pointer-events:none}
+.slide.active{opacity:1;transform:translateY(0) scale(1);pointer-events:auto}
+.slide.exiting{opacity:0;transform:translateY(-40px) scale(0.96)}
+.slide::before{content:'';position:absolute;top:0;left:0;right:0;height:4px;
+border-radius:24px 24px 0 0;
+background:linear-gradient(90deg,var(--cyan),var(--violet),var(--rose))}
+.slide[data-accent="cyan"]::before{background:linear-gradient(90deg,var(--cyan),#00a0cc)}
+.slide[data-accent="gold"]::before{background:linear-gradient(90deg,var(--gold),#e8c878)}
+.slide[data-accent="rose"]::before{background:linear-gradient(90deg,var(--rose),#ff9fd9)}
+.slide[data-accent="violet"]::before{background:linear-gradient(90deg,var(--violet),#d0a8ff)}
+
+h1.cover-title{font-size:clamp(80px,10vw,140px);font-weight:800;letter-spacing:-6px;
+line-height:0.9;
+background:linear-gradient(135deg,#fff 0%,var(--cyan) 40%,var(--rose) 100%);
+-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+margin-bottom:20px;animation:shimmer 6s ease-in-out infinite;background-size:200% 100%}
+@keyframes shimmer{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+
+h2.slide-title{font-size:clamp(32px,4vw,52px);font-weight:700;color:var(--cyan);
+letter-spacing:-2px;margin-bottom:32px;line-height:1.1}
+.cover-subtitle{font-size:clamp(20px,2.5vw,32px);color:var(--text);font-weight:400;
+letter-spacing:2px;text-transform:uppercase;margin-bottom:20px;opacity:0.85}
+.cover-tagline{font-size:clamp(16px,1.6vw,22px);color:var(--dim);
+font-family:var(--mono);letter-spacing:1px;margin-top:30px;line-height:1.6}
+
+.quote-text{font-family:var(--serif);font-size:clamp(22px,2.5vw,34px);
+font-style:italic;line-height:1.5;color:var(--text);
+border-left:4px solid var(--rose);padding-left:32px;max-width:900px}
+
+.statement-lines{display:flex;flex-direction:column;gap:16px}
+.statement-line{font-size:clamp(28px,3.5vw,48px);font-weight:700;
+letter-spacing:-1px;color:var(--text);opacity:0;transform:translateX(-30px);
+animation:lineIn 0.7s ease-out forwards}
+.statement-line:nth-child(1){animation-delay:0.3s}
+.statement-line:nth-child(2){animation-delay:0.6s;color:var(--cyan)}
+.statement-line:nth-child(3){animation-delay:0.9s}
+.statement-line:nth-child(4){animation-delay:1.2s;color:var(--gold)}
+@keyframes lineIn{to{opacity:1;transform:translateX(0)}}
+
+.features-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+@media (max-width:900px){.features-grid{grid-template-columns:repeat(2,1fr)}}
+.feature-card{background:rgba(0,212,255,0.04);
+border:1px solid rgba(0,212,255,0.15);border-radius:12px;padding:20px;
+text-align:center;opacity:0;transform:translateY(20px);
+animation:cardIn 0.6s ease-out forwards}
+.feature-card:nth-child(1){animation-delay:0.2s}
+.feature-card:nth-child(2){animation-delay:0.3s}
+.feature-card:nth-child(3){animation-delay:0.4s}
+.feature-card:nth-child(4){animation-delay:0.5s}
+.feature-card:nth-child(5){animation-delay:0.6s}
+.feature-card:nth-child(6){animation-delay:0.7s}
+.feature-card:nth-child(7){animation-delay:0.8s}
+.feature-card:nth-child(8){animation-delay:0.9s}
+@keyframes cardIn{to{opacity:1;transform:translateY(0)}}
+.feature-icon{font-size:32px;font-weight:800;color:var(--cyan);
+margin-bottom:10px;font-family:var(--serif);font-style:italic}
+.feature-label{font-size:14px;font-weight:700;color:var(--text);margin-bottom:6px}
+.feature-detail{font-size:11px;color:var(--dim);
+font-family:var(--mono);letter-spacing:0.5px}
+
+.formula-box{background:rgba(0,0,0,0.5);border:1px solid var(--border);
+border-left:4px solid var(--cyan);border-radius:12px;
+padding:32px 40px;margin-bottom:24px}
+.formula-expr{font-family:var(--serif);font-size:clamp(28px,4vw,48px);
+font-style:italic;color:var(--cyan);letter-spacing:1px;line-height:1.3;text-align:center}
+.formula-result{font-family:var(--mono);font-size:clamp(16px,1.8vw,22px);
+color:var(--gold);margin-top:16px;text-align:center;letter-spacing:0.5px}
+.formula-note{font-size:clamp(13px,1.3vw,16px);color:var(--dim);
+line-height:1.7;font-family:var(--mono);letter-spacing:0.3px;
+padding-left:16px;border-left:2px solid rgba(200,164,92,0.3)}
+
+.stats-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+@media (max-width:900px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
+.stat-box{text-align:center;padding:24px;background:rgba(0,212,255,0.03);
+border:1px solid rgba(0,212,255,0.12);border-radius:12px;
+opacity:0;transform:scale(0.9);animation:statIn 0.6s ease-out forwards}
+.stat-box:nth-child(1){animation-delay:0.2s}
+.stat-box:nth-child(2){animation-delay:0.35s}
+.stat-box:nth-child(3){animation-delay:0.5s}
+.stat-box:nth-child(4){animation-delay:0.65s}
+.stat-box:nth-child(5){animation-delay:0.8s}
+.stat-box:nth-child(6){animation-delay:0.95s}
+@keyframes statIn{to{opacity:1;transform:scale(1)}}
+.stat-value{font-size:clamp(36px,5vw,60px);font-weight:800;color:var(--cyan);
+font-family:var(--mono);letter-spacing:-2px;line-height:1;margin-bottom:10px}
+.stat-label{font-size:12px;color:var(--dim);text-transform:uppercase;
+letter-spacing:2px;font-family:var(--mono)}
+
+.code-block{background:#000;border:1px solid var(--border);border-radius:12px;
+padding:24px;font-family:var(--mono);font-size:clamp(13px,1.4vw,16px);
+color:var(--green);line-height:1.8;letter-spacing:0.3px;
+overflow-x:auto;white-space:pre}
+.code-block .prompt{color:var(--cyan);font-weight:700}
+.code-block .comment{color:var(--dim)}
+
+#controls{position:fixed;bottom:30px;left:50%;transform:translateX(-50%);
+display:flex;align-items:center;gap:16px;padding:14px 24px;
+background:rgba(10,16,24,0.85);border:1px solid var(--border);
+border-radius:100px;backdrop-filter:blur(20px);z-index:100;
+box-shadow:0 20px 60px rgba(0,0,0,0.5)}
+.ctrl-btn{background:transparent;border:none;color:var(--text);cursor:pointer;
+padding:8px 12px;border-radius:8px;font-size:14px;font-weight:600;
+transition:all 0.2s;display:flex;align-items:center;justify-content:center;
+font-family:var(--mono);letter-spacing:1px}
+.ctrl-btn:hover{background:rgba(0,212,255,0.15);color:var(--cyan)}
+.ctrl-btn:active{transform:scale(0.95)}
+.ctrl-btn.primary{background:var(--cyan);color:#000;padding:10px 20px;min-width:100px}
+.ctrl-btn.primary:hover{background:#00a0cc;color:#000}
+
+#progress-bar{position:fixed;top:0;left:0;right:0;height:3px;
+background:rgba(255,255,255,0.05);z-index:100}
+#progress-fill{height:100%;
+background:linear-gradient(90deg,var(--cyan),var(--violet),var(--rose));
+width:0%;transition:width 0.3s ease;
+box-shadow:0 0 20px rgba(0,212,255,0.5)}
+
+#counter{color:var(--dim);font-family:var(--mono);font-size:12px;
+letter-spacing:2px;padding:0 12px;
+border-left:1px solid var(--border);border-right:1px solid var(--border)}
+
+#speed-control{display:flex;align-items:center;gap:8px;color:var(--dim);
+font-family:var(--mono);font-size:11px;letter-spacing:1px}
+#speed-control select{background:rgba(0,0,0,0.5);border:1px solid var(--border);
+color:var(--text);padding:6px 10px;border-radius:6px;
+font-family:var(--mono);font-size:11px;cursor:pointer;outline:none}
+#speed-control select:focus{border-color:var(--cyan)}
+
+#hint{position:fixed;top:20px;right:20px;padding:8px 14px;
+background:rgba(10,16,24,0.7);border:1px solid var(--border);
+border-radius:8px;color:var(--dim);font-family:var(--mono);
+font-size:10px;letter-spacing:1px;z-index:100;opacity:0.7}
+kbd{background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:4px;
+font-family:var(--mono);font-size:10px;color:var(--cyan);
+border:1px solid rgba(0,212,255,0.2)}
+</style>
+</head>
+<body>
+
+<div id="progress-bar"><div id="progress-fill"></div></div>
+
+<div id="hint">
+<kbd>SPACE</kbd> pause · <kbd>&larr;</kbd><kbd>&rarr;</kbd> nav · <kbd>F</kbd> fullscreen · <kbd>R</kbd> restart
+</div>
+
+<div id="stage"></div>
+
+<div id="controls">
+<button class="ctrl-btn" onclick="prev()" title="Précédent">&larr; PREV</button>
+<button class="ctrl-btn primary" id="play-btn" onclick="togglePlay()">&#9654; PLAY</button>
+<button class="ctrl-btn" onclick="next()" title="Suivant">NEXT &rarr;</button>
+<div id="counter"><span id="cur-slide">01</span> / <span id="tot-slide">18</span></div>
+<div id="speed-control">
+<span>SPEED</span>
+<select id="speed" onchange="setSpeed(this.value)">
+<option value="0.5">0.5&times;</option>
+<option value="1" selected>1&times;</option>
+<option value="1.5">1.5&times;</option>
+<option value="2">2&times;</option>
+<option value="3">3&times;</option>
+</select>
+</div>
+<button class="ctrl-btn" onclick="restart()" title="Recommencer">&#8635;</button>
+</div>
+
+<script>
+var SLIDES = __SLIDES_JSON__;
+
+var state = {
+current: 0,
+playing: false,
+speed: 1.0,
+timer: null,
+slideEls: []
+};
+
+function escapeHtml(str) {
+if (str === null || str === undefined) return '';
+return String(str)
+.replace(/&/g, '&amp;')
+.replace(/</g, '&lt;')
+.replace(/>/g, '&gt;')
+.replace(/"/g, '&quot;')
+.replace(/'/g, '&#39;');
+}
+
+function highlightCode(lines) {
+return lines.map(function(line) {
+var l = escapeHtml(line);
+if (l.indexOf('$ ') === 0) {
+l = '<span class="prompt">$</span> ' + l.substring(2);
+}
+if (l.indexOf('#') === 0) {
+l = '<span class="comment">' + l + '</span>';
+}
+return l;
+}).join('\\n');
+}
+
+function buildSlideHTML(slide) {
+var type = slide.type;
+var accent = slide.accent;
+var inner = '';
+
+if (type === 'cover') {
+inner = '<h1 class="cover-title">' + escapeHtml(slide.title) + '</h1>'
++ '<div class="cover-subtitle">' + escapeHtml(slide.subtitle) + '</div>'
++ '<div class="cover-tagline">' + escapeHtml(slide.tagline) + '</div>';
+} else if (type === 'quote') {
+inner = '<h2 class="slide-title">' + escapeHtml(slide.title) + '</h2>'
++ '<div class="quote-text">' + escapeHtml(slide.text) + '</div>';
+} else if (type === 'statement') {
+var linesHtml = slide.lines.map(function(l) {
+return '<div class="statement-line">' + escapeHtml(l) + '</div>';
+}).join('');
+inner = '<h2 class="slide-title">' + escapeHtml(slide.title) + '</h2>'
++ '<div class="statement-lines">' + linesHtml + '</div>';
+} else if (type === 'features') {
+var itemsHtml = slide.items.map(function(it) {
+return '<div class="feature-card">'
++ '<div class="feature-icon">' + escapeHtml(it.icon) + '</div>'
++ '<div class="feature-label">' + escapeHtml(it.label) + '</div>'
++ '<div class="feature-detail">' + escapeHtml(it.detail) + '</div>'
++ '</div>';
+}).join('');
+inner = '<h2 class="slide-title">' + escapeHtml(slide.title) + '</h2>'
++ '<div class="features-grid">' + itemsHtml + '</div>';
+} else if (type === 'formula') {
+inner = '<h2 class="slide-title">' + escapeHtml(slide.title) + '</h2>'
++ '<div class="formula-box">'
++ '<div class="formula-expr">' + escapeHtml(slide.formula) + '</div>'
++ '<div class="formula-result">' + escapeHtml(slide.result) + '</div>'
++ '</div>'
++ '<div class="formula-note">' + escapeHtml(slide.note) + '</div>';
+} else if (type === 'stats') {
+var statsHtml = slide.items.map(function(it) {
+return '<div class="stat-box">'
++ '<div class="stat-value">' + escapeHtml(it.value) + '</div>'
++ '<div class="stat-label">' + escapeHtml(it.label) + '</div>'
++ '</div>';
+}).join('');
+inner = '<h2 class="slide-title">' + escapeHtml(slide.title) + '</h2>'
++ '<div class="stats-grid">' + statsHtml + '</div>';
+} else if (type === 'code') {
+inner = '<h2 class="slide-title">' + escapeHtml(slide.title) + '</h2>'
++ '<div class="code-block">' + highlightCode(slide.code) + '</div>';
+}
+
+return '<div class="slide" data-accent="' + accent + '" data-id="' + slide.id + '">'
++ inner + '</div>';
+}
+
+function initSlides() {
+var stage = document.getElementById('stage');
+var html = SLIDES.map(buildSlideHTML).join('');
+stage.innerHTML = html;
+state.slideEls = Array.prototype.slice.call(stage.querySelectorAll('.slide'));
+document.getElementById('tot-slide').textContent = String(SLIDES.length).padStart(2, '0');
+if (state.slideEls.length > 0) {
+state.slideEls[0].classList.add('active');
+}
+updateProgress();
+}
+
+function showSlide(index) {
+if (index < 0 || index >= SLIDES.length) return;
+var old = state.slideEls[state.current];
+var neu = state.slideEls[index];
+if (old && old !== neu) {
+old.classList.remove('active');
+old.classList.add('exiting');
+setTimeout(function() { old.classList.remove('exiting'); }, 1000);
+}
+if (neu) {
+neu.classList.add('active');
+}
+state.current = index;
+document.getElementById('cur-slide').textContent = String(index + 1).padStart(2, '0');
+updateProgress();
+restartTimer();
+}
+
+function updateProgress() {
+var pct = ((state.current + 1) / SLIDES.length) * 100;
+document.getElementById('progress-fill').style.width = pct + '%';
+}
+
+function next() {
+if (state.current < SLIDES.length - 1) {
+showSlide(state.current + 1);
+} else {
+showSlide(0);
+}
+}
+
+function prev() {
+if (state.current > 0) {
+showSlide(state.current - 1);
+} else {
+showSlide(SLIDES.length - 1);
+}
+}
+
+function restart() {
+showSlide(0);
+}
+
+function clearTimer() {
+if (state.timer) {
+clearTimeout(state.timer);
+state.timer = null;
+}
+}
+
+function restartTimer() {
+clearTimer();
+if (!state.playing) return;
+var slide = SLIDES[state.current];
+if (!slide) return;
+var dur = (slide.duration || 6) * 1000 / state.speed;
+state.timer = setTimeout(function() {
+if (state.playing) next();
+}, dur);
+}
+
+function togglePlay() {
+if (state.playing) {
+state.playing = false;
+clearTimer();
+document.getElementById('play-btn').innerHTML = '&#9654; PLAY';
+} else {
+state.playing = true;
+document.getElementById('play-btn').innerHTML = '&#10074;&#10074; PAUSE';
+restartTimer();
+}
+}
+
+function setSpeed(val) {
+state.speed = parseFloat(val) || 1.0;
+restartTimer();
+}
+
+document.addEventListener('keydown', function(e) {
+if (e.code === 'Space') {
+e.preventDefault();
+togglePlay();
+} else if (e.code === 'ArrowRight') {
+next();
+} else if (e.code === 'ArrowLeft') {
+prev();
+} else if (e.key === 'f' || e.key === 'F') {
+if (document.fullscreenElement) {
+document.exitFullscreen();
+} else {
+document.documentElement.requestFullscreen();
+}
+} else if (e.key === 'r' || e.key === 'R') {
+restart();
+}
+});
+
+window.addEventListener('load', function() {
+initSlides();
+});
+</script>
+</body>
+</html>
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SERVEUR HTTP
+# ═══════════════════════════════════════════════════════════════════════════
+
+def generer_html():
+slides_json = json.dumps(SLIDES, ensure_ascii=False)
+return HTML_MAIN.replace("__SLIDES_JSON__", slides_json)
+
+
+class Handler(BaseHTTPRequestHandler):
+def log_message(self, *args):
+pass
+
+def _send(self, code, body, ctype="text/html; charset=utf-8"):
+if isinstance(body, str):
+body = body.encode("utf-8")
+try:
+self.send_response(code)
+self.send_header("Content-Type", ctype)
+self.send_header("Content-Length", str(len(body)))
+self.send_header("Cache-Control", "no-cache")
+self.end_headers()
+self.wfile.write(body)
+except (BrokenPipeError, ConnectionResetError):
+pass
+
+def do_GET(self):
+parsed = urlparse(self.path)
+path = parsed.path
+
+if path in ("/", "/index.html"):
+return self._send(200, generer_html())
+
+if path == "/api/slides":
+return self._send(200, json.dumps(SLIDES, ensure_ascii=False, indent=2),
+"application/json; charset=utf-8")
+
+if path == "/api/status":
+return self._send(200, json.dumps({
+"version": VERSION, "auteur": AUTEUR,
+"nb_slides": len(SLIDES),
+"duree_totale": sum(s.get("duration", 6) for s in SLIDES),
+}, ensure_ascii=False, indent=2), "application/json; charset=utf-8")
+
+return self._send(404, "404 — Not found")
+
+
+class Server(ThreadingMixIn, HTTPServer):
+daemon_threads = True
+allow_reuse_address = True
+
+
+def port_libre(host, port):
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+s.settimeout(1)
+s.bind((host, port))
+return True
+except OSError:
+return False
+finally:
+try:
+s.close()
+except Exception:
+pass
+
+
+def trouver_port(host, start, max_tries=20):
+for p in range(start, start + max_tries):
+if port_libre(host, p):
+return p
+return None
+
+
+def main():
+print("")
+print("=" * 78)
+print(" NEXUS SLIDESHOW VIDEO MAKER v" + VERSION)
+print(" Auteur : " + AUTEUR + " | Licence : " + LICENCE)
+print("=" * 78)
+print("")
+print(" Diaporama anime : NEXUS Scientific Computing Engine")
+print(" " + str(len(SLIDES)) + " slides · duree totale " + str(sum(s.get("duration", 6) for s in SLIDES)) + "s")
+print("")
+print(" Base : " + str(BASE))
+print("")
+
+port = PORT
+if not port_libre(HOST, port):
+print(" Port " + str(port) + " occupe, recherche...")
+nouveau = trouver_port(HOST, port + 1)
+if nouveau is None:
+print(" Aucun port libre.")
+return
+port = nouveau
+
+print(" Local : http://localhost:" + str(port) + "/")
+print(" API : http://localhost:" + str(port) + "/api/slides")
+print("")
+print(" Controles :")
+print(" ESPACE play/pause")
+print(" <- -> precedent/suivant")
+print(" F plein ecran")
+print(" R recommencer")
+print("")
+print(" Ctrl+C pour arreter")
+print("")
+
+try:
+srv = Server((HOST, port), Handler)
+except OSError as e:
+print(" Erreur bind : " + str(e))
+return
+
+try:
+srv.serve_forever()
+except KeyboardInterrupt:
+print("")
+print(" Arrete.")
+print("")
+finally:
+try:
+srv.server_close()
+except Exception:
+pass
+
+
+if __name__ == "__main__":
+try:
+main()
+except Exception as e:
+print(" ERREUR FATALE : " + str(e))
